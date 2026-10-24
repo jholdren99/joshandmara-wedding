@@ -1,0 +1,8 @@
+dist/
+worker/index.js
+node_modules/
+.wrangler/
+.env
+.env.*
+.dev.vars
+*.tar.gz
