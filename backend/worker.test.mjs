@@ -6,7 +6,7 @@ class Memory{
  constructor(){this.tables={w_households:[{id:1,name:'Test Household',code:'',guests:['Guest One','Guest Two'],response:'pending',details:{}}],w_sessions:[],w_settings:[],w_gifts:[],w_quiz:[],w_votes:[],w_activities:[],w_hunt:[],w_photos:[],w_guest_settings:[],w_candidates:[],w_owners:[{username:'fixture-owner',name:'Josh & Mara'}]};this.current=null;this.seq=0;this.limit=true}
  async list(t,q={}){return (this.tables[t]||[]).filter(x=>Object.entries(q).every(([k,v])=>!String(v).startsWith('eq.')||String(x[k])===String(v).slice(3)))}
  async one(t,q){return(await this.list(t,q))[0]||null}
- async insert(t,b){let rows=Array.isArray(b)?b:[b];if(t==='w_quiz'&&rows.some(r=>this.tables[t].some(x=>x.household===r.household&&x.round===r.round)))throw new Problem('Already submitted.');for(const r of rows)this.tables[t].push({...r,id:r.id||++this.seq});return rows}
+ async insert(t,b){let rows=Array.isArray(b)?b:[b];if(t==='w_settings'&&rows.some(r=>this.tables[t].some(x=>x.key===r.key)))throw new Problem('Already submitted.');if(t==='w_quiz'&&rows.some(r=>this.tables[t].some(x=>x.household===r.household&&x.round===r.round)))throw new Problem('Already submitted.');for(const r of rows)this.tables[t].push({...r,id:r.id||++this.seq});return rows}
  async update(t,q,b){let rows=await this.list(t,q);rows.forEach(r=>Object.assign(r,b));return rows}
  async remove(t,q){const rows=await this.list(t,q);this.tables[t]=this.tables[t].filter(x=>!rows.includes(x));if(t==='w_sessions')this.current=null}
  async upsert(t,b){const key=t==='w_settings'?'key':'household';const row=this.tables[t].find(x=>x[key]===b[key]);if(row)Object.assign(row,b);else this.tables[t].push(b)}
@@ -71,6 +71,25 @@ test('poll results aggregate households, exclude test ballots, and expose no ind
  const state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.ballots,3);assert.deepEqual(state.results[0],{josh:1,mara:2,total:3,joshPercent:33,maraPercent:67});assert.equal(state.isTest,true);assert.equal(JSON.stringify(state).includes('House 2'),false);
  db.current=null;await fail('poll',{answers:Array(10).fill('josh')},db);
 });
-test('trivia leaderboard renders above quiz and poll markup requires all ten choices',async()=>{
- const {guestTrivia}=await import('../public/trivia.js');const html=guestTrivia({leaderboard:[{name:'Test house',score:7,total:10}],trivia:{round:'r',questions:[{question:'Question',options:['A','B','C','D']}]},quizDone:false},s=>String(s));assert.ok(html.indexOf('Trivia leaderboard')<html.indexOf('id="fullquiz"'));assert.match(html,/7 \/ 10/);
+test('short-answer grading accepts spelling and case but rejects wrong places and numbers',async()=>{
+ const {matchesAnswer}=await import('./edge/individual-games.mjs');
+ for(const [answer,expected,result] of [['CRUIS',['cruise'],true],['SUN & SKI!',['Sun and Ski'],true],['Lake Lure',['Lake Badin'],false],['May 2023',['May 2024'],false],['2 days',['2 days'],true],['Mara',['Josh'],false]])assert.equal(matchesAnswer(answer,expected),result);
+});
+test('individual scores and votes persist separately, reject impersonation, and isolate test totals',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].response='attending';db.tables.w_households[0].details.is_test=true;
+ db.tables.w_households.push({id:2,name:'Real',guests:['Real Guest'],response:'attending',details:{}});
+ db.tables.w_settings.push({key:'trivia',value:{round:'typed-round',questions:[{question:'Vacation?',acceptedAnswers:['cruise']}]}});
+ const state=async()=>await(await api(request('games'),{},db)).json();const d=await state();const [a,b]=d.members;
+ await fail('games/quiz',{member:'intruder',round:'typed-round',answers:['cruise']},db);
+ await fail('games/quiz',{member:a.id,round:'stale',answers:['cruise']},db,409);
+ await api(request('games/quiz',{member:a.id,round:'typed-round',answers:['CRUIS']}),{},db);
+ await api(request('games/quiz',{member:b.id,round:'typed-round',answers:['beach']}),{},db);
+ assert.deepEqual((await state()).leaderboard.map(x=>x.score),[1,0]);
+ await assert.rejects(()=>api(request('games/quiz',{member:a.id,round:'typed-round',answers:['cruise']}),{},db));
+ for(const [member,vote] of [[a.id,'josh'],[b.id,'mara']])await api(request('games/poll',{member,answers:Array(10).fill(vote)}),{},db);
+ assert.equal((await state()).pollResults[0].joshPercent,50);
+ await api(request('games/poll',{member:a.id,answers:Array(10).fill('mara')}),{},db);
+ const saved=await state();assert.equal(saved.pollResults[0].total,2);assert.equal(saved.pollResults[0].maraPercent,100);assert.equal(saved.members[0].quiz.score,1);
+ db.current.household=2;const real=await state();assert.equal(real.leaderboard.length,0);assert.equal(real.pollResults[0].total,0);
+ db.current=null;await fail('games',undefined,db);
 });
