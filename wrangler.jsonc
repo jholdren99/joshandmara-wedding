@@ -1,0 +1,5 @@
+{
+  "name": "joshandmara-wedding",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-23"
+}
