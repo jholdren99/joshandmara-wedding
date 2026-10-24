@@ -56,3 +56,21 @@ test('non-attending RSVP answers discard stale meals and cannot unlock private a
  await api(request('rsvp',{answers:db.tables.w_households[0].guests.map(name=>({name,attending:'no',meal:'Steak'}))}),{},db);assert.equal(db.tables.w_households[0].response,'declined');assert.ok(db.tables.w_households[0].details.answers.every(a=>a.meal===''));
  for(const route of ['portal','community','photos','photo-options'])await fail(route,undefined,db);
 });
+
+test('couple poll hides percentages until submission and validates every answer',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};await fail('poll',{answers:Array(10).fill('josh')},db);db.tables.w_households[0].response='attending';
+ let state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.questions.length,10);assert.equal(state.done,false);assert.equal(state.results,undefined);
+ for(const answers of [[],Array(9).fill('josh'),[...Array(9).fill('josh'),'both']])await fail('poll',{answers},db,400);
+ await api(request('poll',{answers:Array(10).fill('josh')}),{},db);state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.results[0].joshPercent,100);assert.equal(state.ballots,1);
+ await api(request('poll',{answers:Array(10).fill('mara')}),{},db);state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.ballots,1);assert.equal(state.results[0].maraPercent,100);assert.equal(db.tables.w_settings.filter(x=>x.key.startsWith('couple-poll:')).length,1);
+});
+test('poll results aggregate households, exclude test ballots, and expose no individual votes',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].response='attending';
+ for(let id=2;id<=4;id++)db.tables.w_households.push({id,name:'House '+id,guests:['Guest'],response:'attending',details:id===4?{is_test:true}:{}});
+ for(let id=1;id<=4;id++){db.current.household=id;await api(request('poll',{answers:Array(10).fill(id===1?'josh':'mara')}),{},db)}
+ const state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.ballots,3);assert.deepEqual(state.results[0],{josh:1,mara:2,total:3,joshPercent:33,maraPercent:67});assert.equal(state.isTest,true);assert.equal(JSON.stringify(state).includes('House 2'),false);
+ db.current=null;await fail('poll',{answers:Array(10).fill('josh')},db);
+});
+test('trivia leaderboard renders above quiz and poll markup requires all ten choices',async()=>{
+ const {guestTrivia}=await import('../public/trivia.js');const html=guestTrivia({leaderboard:[{name:'Test house',score:7,total:10}],trivia:{round:'r',questions:[{question:'Question',options:['A','B','C','D']}]},quizDone:false},s=>String(s));assert.ok(html.indexOf('Trivia leaderboard')<html.indexOf('id="fullquiz"'));assert.match(html,/7 \/ 10/);
+});

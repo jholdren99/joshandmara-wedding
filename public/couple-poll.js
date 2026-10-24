@@ -1,0 +1,10 @@
+export function mountCouplePoll({container,poll,api,esc,toast}){
+ if(!poll?.questions?.length)return;
+ const root=document.createElement('section');root.className='couple-poll';container.append(root);
+ function render(p){
+  root.innerHTML=`<h3>Who’s more likely to?</h3><p class="hint">Pick Josh or Mara for all ten questions. Submit to see how everyone voted. One ballot per invitation household; updating your answers replaces your previous votes. This poll is optional and unscored.</p>${p.isTest?'<p class="rsvp-test">Test invitation · Your votes do not count toward the percentages.</p>':''}<form id="couple-poll" class="formbox">${p.questions.map((q,i)=>`<fieldset class="poll-question"><legend>${i+1}. ${esc(q)}</legend><div class="poll-choices">${['josh','mara'].map(person=>`<label><input type="radio" name="poll-${i}" value="${person}" required ${p.answers?.[i]===person?'checked':''}>${person==='josh'?'Josh':'Mara'}</label>`).join('')}</div>${p.done?result(p.results[i]):''}</fieldset>`).join('')}<button>${p.done?'Update our votes':'Submit our votes & see results'}</button><div class="error" role="alert"></div><p class="poll-save-status" role="status">${p.done?`Results from ${p.ballots} household${p.ballots===1?'':'s'}.`:''}</p></form>`;
+  root.querySelector('form').onsubmit=async e=>{e.preventDefault();const form=e.target,button=form.querySelector('button');button.disabled=true;try{const answers=p.questions.map((_,i)=>new FormData(form).get('poll-'+i));const saved=await api('poll',{answers});render(saved.poll);toast('Your votes are saved. See the results below each question.')}catch(error){form.querySelector('.error').textContent=error.message;button.disabled=false}};
+ }
+ function result(r){if(!r?.total)return '<p class="hint">No counted votes yet. Be the first!</p>';return `<div class="poll-result"><div><span>Josh · ${r.joshPercent}%</span><span>Mara · ${r.maraPercent}%</span></div><div class="poll-bar" role="img" aria-label="Josh ${r.joshPercent} percent, Mara ${r.maraPercent} percent"><span style="width:${r.joshPercent}%"></span></div><small>${r.total} household${r.total===1?'':'s'} voted</small></div>`}
+ render(poll);
+}

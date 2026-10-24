@@ -31,6 +31,29 @@ async function photoPage(db,cursor){
  const rows=await db.list('w_photos',q),photos=rows.slice(0,50),last=photos.at(-1);
  return{photos:photos.map(({id,caption})=>({id,caption})),next:rows.length>50&&last?btoa(JSON.stringify([last.created,last.id])):null};
 }
+export const POLL_QUESTIONS=[
+ 'Who is most likely to turn a quick shopping trip into a three-hour adventure?',
+ 'Who is most likely to plan the next vacation before the current one is over?',
+ 'Who is most likely to cry first during the wedding ceremony?',
+ 'Who is most likely to overpack for a weekend trip?',
+ 'Who is most likely to be the first person on the dance floor?',
+ 'Who is most likely to suggest getting sushi for dinner?',
+ 'Who is most likely to fall asleep during a movie?',
+ 'Who is most likely to bring home another pet?',
+ 'Who is most likely to buy something random on Amazon at two in the morning?',
+ 'Who is most likely to binge-watch an entire TV show in one day?'
+];
+const POLL_PREFIX='couple-poll:v1:';
+export function cleanPoll(answers){if(!Array.isArray(answers)||answers.length!==POLL_QUESTIONS.length||answers.some(v=>!['josh','mara'].includes(v)))throw new Problem('Choose Josh or Mara for all ten questions.');return [...answers]}
+async function couplePoll(db,h){
+ const own=await db.setting(POLL_PREFIX+h.id,null),done=Array.isArray(own?.answers)&&own.answers.length===10;
+ const base={questions:POLL_QUESTIONS,done,answers:done?own.answers:null,isTest:!!h.details?.is_test};
+ if(!done)return base;
+ const houses=await db.list('w_households',{select:'id,details',limit:1000});
+ const eligible=new Set(houses.filter(x=>!x.details?.is_test).map(x=>POLL_PREFIX+x.id));
+ const ballots=(await db.list('w_settings',{key:'like.'+POLL_PREFIX+'*',select:'key,value',limit:1000})).filter(x=>eligible.has(x.key)&&Array.isArray(x.value?.answers)&&x.value.answers.length===10&&x.value.answers.every(a=>['josh','mara'].includes(a)));
+ return{...base,ballots:ballots.length,results:POLL_QUESTIONS.map((_,i)=>{const josh=ballots.filter(b=>b.value.answers[i]==='josh').length,total=ballots.length,joshPercent=total?Math.round(josh/total*100):0;return{josh,mara:total-josh,total,joshPercent,maraPercent:total?100-joshPercent:0}})};
+}
 export function cleanTrivia(questions,publish=false){
  if(!Array.isArray(questions)||questions.length<1||questions.length>10)throw new Problem('Use 1–10 trivia questions.');
  const cleaned=questions.map(q=>{if(!q||!Array.isArray(q.options)||q.options.length>4)throw new Problem('Use four answer options per question.');return {question:text(q.question,250),options:q.options.map(o=>text(o,200)),correct:Number.isInteger(q.correct)&&q.correct>=0&&q.correct<=3?q.correct:null,enabled:q.enabled!==false}});
@@ -105,9 +128,10 @@ export async function api(req,env,db=new Store(env)){
   if(p==='/api/photos')return reply(await photoPage(db,url.searchParams.get('cursor')));
   if(p==='/api/photo-options')return reply({storage:req.headers.get('X-Wedding-Uploads')==='r2'?'r2':'supabase',householdLimit:req.headers.get('X-Wedding-Uploads')==='r2'?null:30,maxBytes:3145728});
   if(p==='/api/portal'){const event=await db.setting('event',{});return reply({venue:event.venue||'Venue to be confirmed',date:event.date||'October 2027 · tentative',time:event.time||'Time to be announced',travel:'See your private travel details below. More information will be added as plans are confirmed.',schedule:['Arrival · time to be announced','Ceremony','Cocktail hour','Dinner & dancing'],activities:await db.list('w_activities',{household:'eq.'+h.id,order:'id.desc'})})}
-  if(p==='/api/community'){const trivia=await db.setting('trivia',null);const activities=await db.list('w_activities',{order:'id.desc',limit:1000}),votes=await db.list('w_votes'),houses=await db.list('w_households',{select:'id,name,details'}),names=new Map(houses.map(x=>[x.id,x.name]));return reply({songs:activities.filter(a=>a.kind==='song').map(a=>({id:a.id,body:a.body,votes:votes.filter(v=>v.song===a.id).length})).sort((a,b)=>b.votes-a.votes),voted:votes.filter(v=>v.household===h.id).map(v=>v.song),leaderboard:(trivia?await db.list('w_quiz',{round:'eq.'+trivia.round,order:'score.desc',limit:1000}):[]).filter(q=>!houses.find(h=>h.id===q.household)?.details?.is_test).slice(0,20).map(q=>({name:names.get(q.household),score:q.score,total:q.total})),guestbook:activities.filter(a=>a.kind==='guestbook').map(a=>({name:names.get(a.household),body:a.body})),...await photoPage(db,null),hunt:(await db.one('w_hunt',{household:'eq.'+h.id}))?.items||[],personal:await db.one('w_guest_settings',{household:'eq.'+h.id})||{seat:'',events:''},travel:await db.setting('travel',{}),meals:await db.setting('meals',[]),trivia:trivia?{round:trivia.round,questions:trivia.questions.map(q=>({question:q.question,options:q.options}))}:null,quizDone:trivia?!!await db.one('w_quiz',{household:'eq.'+h.id,round:'eq.'+trivia.round}):false})}
+  if(p==='/api/community'){const trivia=await db.setting('trivia',null);const activities=await db.list('w_activities',{order:'id.desc',limit:1000}),votes=await db.list('w_votes'),houses=await db.list('w_households',{select:'id,name,details'}),names=new Map(houses.map(x=>[x.id,x.name]));return reply({songs:activities.filter(a=>a.kind==='song').map(a=>({id:a.id,body:a.body,votes:votes.filter(v=>v.song===a.id).length})).sort((a,b)=>b.votes-a.votes),voted:votes.filter(v=>v.household===h.id).map(v=>v.song),leaderboard:(trivia?await db.list('w_quiz',{round:'eq.'+trivia.round,order:'score.desc',limit:1000}):[]).filter(q=>!houses.find(h=>h.id===q.household)?.details?.is_test).slice(0,20).map(q=>({name:names.get(q.household),score:q.score,total:q.total})),guestbook:activities.filter(a=>a.kind==='guestbook').map(a=>({name:names.get(a.household),body:a.body})),...await photoPage(db,null),hunt:(await db.one('w_hunt',{household:'eq.'+h.id}))?.items||[],personal:await db.one('w_guest_settings',{household:'eq.'+h.id})||{seat:'',events:''},travel:await db.setting('travel',{}),meals:await db.setting('meals',[]),trivia:trivia?{round:trivia.round,questions:trivia.questions.map(q=>({question:q.question,options:q.options}))}:null,poll:await couplePoll(db,h),quizDone:trivia?!!await db.one('w_quiz',{household:'eq.'+h.id,round:'eq.'+trivia.round}):false})}
  }else{
   await limited(db,req,'guest-write',100);
+  if(p==='/api/poll'){await db.upsert('w_settings',{key:POLL_PREFIX+h.id,value:{answers:cleanPoll(b.answers)}});return reply({ok:true,poll:await couplePoll(db,h)})}
   if(p==='/api/activity'){if(!['song','memory','advice','guestbook'].includes(b.kind))throw new Problem('Unknown activity.');await db.insert('w_activities',{household:h.id,kind:b.kind,body:required(b.body,1500)});return reply({ok:true})}
   if(p==='/api/vote'){await db.rpc('wedding_vote',{p_household:h.id,p_song:integer(b.song)});return reply({ok:true})}
   if(p==='/api/quiz'){const trivia=await db.setting('trivia',null);if(!trivia)throw new Problem('Personal trivia is not open yet.');if(b.round!==trivia.round)throw new Problem('A new trivia round is available. Refresh before playing.');const answers=b.answers;if(!Array.isArray(answers)||answers.length!==trivia.questions.length||answers.some(a=>!Number.isInteger(a)||a<0||a>3))throw new Problem('Answer every trivia question.');const score=trivia.questions.filter((q,i)=>q.correct===answers[i]).length;await db.insert('w_quiz',{household:h.id,round:trivia.round,total:trivia.questions.length,score});return reply({ok:true,score,total:trivia.questions.length})}

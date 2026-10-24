@@ -16,7 +16,7 @@ The existing website remains at https://joshandmara.rsvp. Its last published fro
 
 ## Supabase state
 
-The wedding backend is separate from the frontend. backend/edge contains an updated API that must be deployed manually before this release. Chicken/Steak meal choices and private Catawba Falls Events directions/hotel suggestions have already been saved. Personal trivia is a private draft awaiting the couple’s answers; it has not been published.
+The wedding backend is separate from the frontend. backend/edge contains an updated API that must be deployed manually before this release. Chicken/Steak meal choices and private Catawba Falls Events directions/hotel suggestions have already been saved. The final ten-question answer file is provided privately for owner import and publication; it has not been uploaded to the live database.
 
 The deployed w_quiz table has round (text, default legacy) and total (integer, default 3), with a composite primary key (household, round). Do not reapply migrations blindly. Existing guest and seating records remain in Supabase.
 
@@ -28,4 +28,4 @@ The current API proxy requires a WEDDING_GATEWAY_SECRET runtime secret and an al
 
 This repository does not back up the private guest database, photo bucket, or live runtime secrets. Those remain in their existing services.
 
-Release validation: 32 automated checks cover RSVP access, private trivia, seating, R2 authorization/upload failure handling, and gallery pagination past 500 photos. Browser checks cover the eight-second intro, friendly No confirmation, required meal validation and Yes progress/portal transition using isolated fixtures. No real guest RSVP or seating assignments were changed. No live Cloudflare R2 integration has been tested or enabled.
+Release validation: 35 automated checks cover RSVP access, private trivia, seating, R2 authorization/upload failure handling, and gallery pagination past 500 photos. Browser checks cover the eight-second intro, friendly No confirmation, required meal validation and Yes progress/portal transition using isolated fixtures. The ten-question Josh/Mara poll and leaderboard-above-quiz layout are included. Browser checks confirm incomplete ballots cannot submit and percentages appear after all ten votes. See RELEASE_STEPS.md for release order. No real guest RSVP or seating assignments were changed. No live Cloudflare R2 integration has been tested or enabled.
