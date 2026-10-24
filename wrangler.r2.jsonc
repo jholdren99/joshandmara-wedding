@@ -1,0 +1,9 @@
+{
+  "name": "joshandmara-wedding",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-23",
+  "vars": { "PHOTO_STORAGE": "r2" },
+  "r2_buckets": [
+    { "binding": "WEDDING_PHOTOS", "bucket_name": "joshandmara-guest-photos" }
+  ]
+}

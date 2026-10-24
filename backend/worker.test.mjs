@@ -32,3 +32,45 @@ test('saved nicknames and every listed household member work only with the corre
 test('Maybe is saved distinctly, test metadata survives updates, and only Yes unlocks the guide',async()=>{const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].details={is_test:true};const answer=attending=>({answers:db.tables.w_households[0].guests.map(name=>({name,attending}))});let r=await api(request('rsvp',answer('maybe')),{},db);assert.equal((await r.json()).response,'maybe');assert.equal(db.tables.w_households[0].response,'maybe');assert.equal(db.tables.w_households[0].details.is_test,true);await fail('portal',undefined,db);r=await api(request('rsvp',answer('no')),{},db);assert.equal((await r.json()).response,'declined');await fail('portal',undefined,db);r=await api(request('rsvp',answer('yes')),{},db);assert.equal((await r.json()).response,'attending');assert.equal((await api(request('portal'),{},db)).status,200);assert.equal(db.tables.w_households[0].details.is_test,true);await fail('rsvp',answer('surprise'),db,400)});
 
 test('only owners can configure trivia and incomplete answer keys cannot be published',async()=>{const db=new Memory();db.current={role:'guest',household:1};await fail('admin/trivia',{mode:'publish',questions:[]},db,403);db.current={role:'owner'};await fail('admin/trivia',{mode:'publish',questions:[{question:'First date?',options:[],correct:null}]},db,400);const questions=Array.from({length:3},(_,i)=>({question:'Question '+i,options:['A','B','C','D'],correct:i}));assert.equal((await api(request('admin/trivia',{mode:'publish',questions}),{},db)).status,200);const saved=await db.setting('trivia');assert.equal(saved.questions.length,3);assert.equal(saved.questions[1].correct,1)});
+
+test('R2 metadata requires trusted gateway and attending guest, validates paths, and completes idempotently',async()=>{
+ const db=new Memory(),id='a'.repeat(64),path='r2/1/'+id;
+ const call=(route,body)=>{const r=request(route,body);r.headers.set('X-Wedding-Storage','r2');r.headers.set('X-Wedding-Uploads','r2');return api(r,{},db)};
+ await assert.rejects(()=>call('_photos/authorize',{}),e=>e.status===403);
+ db.current={role:'guest',household:1};await assert.rejects(()=>call('_photos/authorize',{}),e=>e.status===403);db.tables.w_households[0].response='attending';
+ await fail('_photos/authorize',{},db,403);let r=await call('_photos/authorize',{});assert.match((await r.json()).path,/^r2\/1\/[a-f0-9]{64}$/);
+ await assert.rejects(()=>call('_photos/complete',{id,path:'r2/2/'+id,mime:'image/jpeg'}),e=>e.status===400);
+ for(let i=0;i<2;i++)assert.equal((await call('_photos/complete',{id,path,mime:'image/jpeg',caption:'Dance'})).status,200);
+ assert.equal(db.tables.w_photos.length,1);r=await call('photo/'+id);assert.equal(r.headers.get('X-Wedding-R2-Key'),path);
+ db.tables.w_households[0].response='declined';await assert.rejects(()=>call('photo/'+id),e=>e.status===403);
+});
+test('photo pages continue beyond 500 records and reject malformed cursors',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].response='attending';
+ const photos=Array.from({length:551},(_,i)=>({id:(551-i).toString(16).padStart(64,'0'),caption:'Photo '+i,created:'2026-10-24T12:00:00+00:00'}));
+ const original=db.list.bind(db);db.list=async(t,q={})=>{if(t!=='w_photos')return original(t,q);let rows=photos;if(q.or){const id=q.or.match(/id.lt.([a-f0-9]{64})/)[1];rows=rows.filter(x=>x.id<id)}return rows.slice(0,q.limit)};
+ let next=null,loaded=[];do{const page=await(await api(request('photos'+(next?'?cursor='+encodeURIComponent(next):'')),{},db)).json();loaded.push(...page.photos);next=page.next}while(next);
+ assert.equal(loaded.length,551);assert.equal(new Set(loaded.map(x=>x.id)).size,551);await fail('photos?cursor=bad',undefined,db,400);
+});
+test('non-attending RSVP answers discard stale meals and cannot unlock private activities',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};await db.upsert('w_settings',{key:'meals',value:['Chicken','Steak']});
+ await api(request('rsvp',{answers:db.tables.w_households[0].guests.map(name=>({name,attending:'no',meal:'Steak'}))}),{},db);assert.equal(db.tables.w_households[0].response,'declined');assert.ok(db.tables.w_households[0].details.answers.every(a=>a.meal===''));
+ for(const route of ['portal','community','photos','photo-options'])await fail(route,undefined,db);
+});
+
+test('couple poll hides percentages until submission and validates every answer',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};await fail('poll',{answers:Array(10).fill('josh')},db);db.tables.w_households[0].response='attending';
+ let state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.questions.length,10);assert.equal(state.done,false);assert.equal(state.results,undefined);
+ for(const answers of [[],Array(9).fill('josh'),[...Array(9).fill('josh'),'both']])await fail('poll',{answers},db,400);
+ await api(request('poll',{answers:Array(10).fill('josh')}),{},db);state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.results[0].joshPercent,100);assert.equal(state.ballots,1);
+ await api(request('poll',{answers:Array(10).fill('mara')}),{},db);state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.ballots,1);assert.equal(state.results[0].maraPercent,100);assert.equal(db.tables.w_settings.filter(x=>x.key.startsWith('couple-poll:')).length,1);
+});
+test('poll results aggregate households, exclude test ballots, and expose no individual votes',async()=>{
+ const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].response='attending';
+ for(let id=2;id<=4;id++)db.tables.w_households.push({id,name:'House '+id,guests:['Guest'],response:'attending',details:id===4?{is_test:true}:{}});
+ for(let id=1;id<=4;id++){db.current.household=id;await api(request('poll',{answers:Array(10).fill(id===1?'josh':'mara')}),{},db)}
+ const state=(await(await api(request('community'),{},db)).json()).poll;assert.equal(state.ballots,3);assert.deepEqual(state.results[0],{josh:1,mara:2,total:3,joshPercent:33,maraPercent:67});assert.equal(state.isTest,true);assert.equal(JSON.stringify(state).includes('House 2'),false);
+ db.current=null;await fail('poll',{answers:Array(10).fill('josh')},db);
+});
+test('trivia leaderboard renders above quiz and poll markup requires all ten choices',async()=>{
+ const {guestTrivia}=await import('../public/trivia.js');const html=guestTrivia({leaderboard:[{name:'Test house',score:7,total:10}],trivia:{round:'r',questions:[{question:'Question',options:['A','B','C','D']}]},quizDone:false},s=>String(s));assert.ok(html.indexOf('Trivia leaderboard')<html.indexOf('id="fullquiz"'));assert.match(html,/7 \/ 10/);
+});

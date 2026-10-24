@@ -17,6 +17,43 @@ export function cleanSeating(b,current){
  const tables=b.tables.map(t=>{if(!t||typeof t.id!=='string'||!/^T[0-9A-Za-z_-]{1,40}$/.test(t.id)||ids.has(t.id))throw new Problem('Each table needs a unique ID.');ids.add(t.id);if(!Array.isArray(t.seats)||t.seats.length!==8)throw new Problem('Each table must have exactly eight seat positions.');const seats=t.seats.map(id=>{if(id===null)return null;if(typeof id!=='string'||!guestIds.has(id)||used.has(id))throw new Problem('Every guest may be seated only once, using the current guest list.');used.add(id);return id});if(!Number.isFinite(t.x)||!Number.isFinite(t.y)||t.x<145||t.x>1655||t.y<220||t.y>1250)throw new Problem('Keep tables within the planning canvas.');return{id:t.id,label:required(t.label,60),x:Math.round(t.x),y:Math.round(t.y),seats}});
  return{...current,revision:current.revision+1,updatedAt:new Date().toISOString(),tables,guests};
 }
+export function imageBytes(data){
+ let bytes;try{bytes=Uint8Array.from(atob(data||''),c=>c.charCodeAt(0))}catch{throw new Problem('Invalid image upload.')}
+ if(bytes.length>3145728)throw new Problem('Choose a photo smaller than 3 MB.',413);
+ let mime;if(bytes[0]===255&&bytes[1]===216&&bytes[2]===255)mime='image/jpeg';else if(bytes.slice(0,8).join(',')==='137,80,78,71,13,10,26,10')mime='image/png';else if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';else throw new Problem('Use a JPEG, PNG or WebP image.');return{bytes,mime};
+}
+async function photoPage(db,cursor){
+ const q={select:'id,caption,created',order:'created.desc,id.desc',limit:51};
+ if(cursor){let c;try{c=JSON.parse(atob(cursor))}catch{throw new Problem('Invalid photo page.')}
+  if(!Array.isArray(c)||!/^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+]00:00)$/.test(c[0])||!Number.isFinite(Date.parse(c[0]))||!/^[a-f0-9]{64}$/.test(c[1]))throw new Problem('Invalid photo page.');
+  q.or=`(created.lt.${c[0]},and(created.eq.${c[0]},id.lt.${c[1]}))`;
+ }
+ const rows=await db.list('w_photos',q),photos=rows.slice(0,50),last=photos.at(-1);
+ return{photos:photos.map(({id,caption})=>({id,caption})),next:rows.length>50&&last?btoa(JSON.stringify([last.created,last.id])):null};
+}
+export const POLL_QUESTIONS=[
+ 'Who is most likely to turn a quick shopping trip into a three-hour adventure?',
+ 'Who is most likely to plan the next vacation before the current one is over?',
+ 'Who is most likely to cry first during the wedding ceremony?',
+ 'Who is most likely to overpack for a weekend trip?',
+ 'Who is most likely to be the first person on the dance floor?',
+ 'Who is most likely to suggest getting sushi for dinner?',
+ 'Who is most likely to fall asleep during a movie?',
+ 'Who is most likely to bring home another pet?',
+ 'Who is most likely to buy something random on Amazon at two in the morning?',
+ 'Who is most likely to binge-watch an entire TV show in one day?'
+];
+const POLL_PREFIX='couple-poll:v1:';
+export function cleanPoll(answers){if(!Array.isArray(answers)||answers.length!==POLL_QUESTIONS.length||answers.some(v=>!['josh','mara'].includes(v)))throw new Problem('Choose Josh or Mara for all ten questions.');return [...answers]}
+async function couplePoll(db,h){
+ const own=await db.setting(POLL_PREFIX+h.id,null),done=Array.isArray(own?.answers)&&own.answers.length===10;
+ const base={questions:POLL_QUESTIONS,done,answers:done?own.answers:null,isTest:!!h.details?.is_test};
+ if(!done)return base;
+ const houses=await db.list('w_households',{select:'id,details',limit:1000});
+ const eligible=new Set(houses.filter(x=>!x.details?.is_test).map(x=>POLL_PREFIX+x.id));
+ const ballots=(await db.list('w_settings',{key:'like.'+POLL_PREFIX+'*',select:'key,value',limit:1000})).filter(x=>eligible.has(x.key)&&Array.isArray(x.value?.answers)&&x.value.answers.length===10&&x.value.answers.every(a=>['josh','mara'].includes(a)));
+ return{...base,ballots:ballots.length,results:POLL_QUESTIONS.map((_,i)=>{const josh=ballots.filter(b=>b.value.answers[i]==='josh').length,total=ballots.length,joshPercent=total?Math.round(josh/total*100):0;return{josh,mara:total-josh,total,joshPercent,maraPercent:total?100-joshPercent:0}})};
+}
 export function cleanTrivia(questions,publish=false){
  if(!Array.isArray(questions)||questions.length<1||questions.length>10)throw new Problem('Use 1–10 trivia questions.');
  const cleaned=questions.map(q=>{if(!q||!Array.isArray(q.options)||q.options.length>4)throw new Problem('Use four answer options per question.');return {question:text(q.question,250),options:q.options.map(o=>text(o,200)),correct:Number.isInteger(q.correct)&&q.correct>=0&&q.correct<=3?q.correct:null,enabled:q.enabled!==false}});
@@ -83,20 +120,35 @@ export async function api(req,env,db=new Store(env)){
   }
   throw new Problem('Owner route not found.',404);
  }
- if(p==='/api/rsvp'&&req.method==='POST'){const h=await household(db,s);const answers=b.answers;if(!Array.isArray(answers)||answers.length!==h.guests.length||answers.some((a,i)=>a.name!==h.guests[i]||!['yes','no','maybe'].includes(a.attending)))throw new Problem('Please respond for each invited guest.');let choices=await db.setting('meals',[]);if(choices.length&&answers.some(a=>a.attending==='yes'&&!choices.includes(a.meal)))throw new Problem('Choose a meal for each attending guest.');let email=text(b.email,200);if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new Problem('Enter a valid contact email.');const response=answers.some(a=>a.attending==='yes')?'attending':answers.some(a=>a.attending==='maybe')?'maybe':'declined';await db.update('w_households',{id:'eq.'+h.id},{response,details:{...h.details,answers:answers.map(a=>({name:a.name,attending:a.attending,diet:text(a.diet,500),meal:text(a.meal,200)})),email,note:text(b.note,1000)}});return reply({ok:true,response})}
+ if(p==='/api/rsvp'&&req.method==='POST'){const h=await household(db,s);const answers=b.answers;if(!Array.isArray(answers)||answers.length!==h.guests.length||answers.some((a,i)=>a.name!==h.guests[i]||!['yes','no','maybe'].includes(a.attending)))throw new Problem('Please respond for each invited guest.');let choices=await db.setting('meals',[]);if(choices.length&&answers.some(a=>a.attending==='yes'&&!choices.includes(a.meal)))throw new Problem('Choose a meal for each attending guest.');let email=text(b.email,200);if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new Problem('Enter a valid contact email.');const response=answers.some(a=>a.attending==='yes')?'attending':answers.some(a=>a.attending==='maybe')?'maybe':'declined';await db.update('w_households',{id:'eq.'+h.id},{response,details:{...h.details,answers:answers.map(a=>({name:a.name,attending:a.attending,diet:text(a.diet,500),meal:a.attending==='yes'?text(a.meal,200):''})),email,note:text(b.note,1000)}});return reply({ok:true,response})}
  const h=s?.role==='owner'?null:await household(db,s,true);
- if(p.startsWith('/api/photo/')&&req.method==='GET'){let id=p.split('/').pop();if(!/^[a-f0-9]{64}$/.test(id))throw new Problem('Photo not found.',404);let photo=await db.one('w_photos',{id:'eq.'+id});if(!photo)throw new Problem('Photo not found.',404);const r=await db.storage(photo.path);if(!r.ok)throw new Problem('Photo is unavailable.',404);return new Response(r.body,{headers:{'Content-Type':photo.mime,'Cache-Control':'private,no-store'}})}
+ if(p.startsWith('/api/photo/')&&req.method==='GET'){let id=p.split('/').pop();if(!/^[a-f0-9]{64}$/.test(id))throw new Problem('Photo not found.',404);let photo=await db.one('w_photos',{id:'eq.'+id});if(!photo)throw new Problem('Photo not found.',404);if(photo.path.startsWith('r2/')){if(req.headers.get('X-Wedding-Storage')!=='r2')throw new Problem('The photo album connection is not ready.',503);return reply({mime:photo.mime},200,{'X-Wedding-R2-Key':photo.path})}const r=await db.storage(photo.path);if(!r.ok)throw new Problem('Photo is unavailable.',404);return new Response(r.body,{headers:{'Content-Type':photo.mime,'Cache-Control':'private,no-store'}})}
  if(!h)throw new Problem('Verify an invitation to enter guest activities.',403);
  if(req.method==='GET'){
+  if(p==='/api/photos')return reply(await photoPage(db,url.searchParams.get('cursor')));
+  if(p==='/api/photo-options')return reply({storage:req.headers.get('X-Wedding-Uploads')==='r2'?'r2':'supabase',householdLimit:req.headers.get('X-Wedding-Uploads')==='r2'?null:30,maxBytes:3145728});
   if(p==='/api/portal'){const event=await db.setting('event',{});return reply({venue:event.venue||'Venue to be confirmed',date:event.date||'October 2027 · tentative',time:event.time||'Time to be announced',travel:'See your private travel details below. More information will be added as plans are confirmed.',schedule:['Arrival · time to be announced','Ceremony','Cocktail hour','Dinner & dancing'],activities:await db.list('w_activities',{household:'eq.'+h.id,order:'id.desc'})})}
-  if(p==='/api/community'){const trivia=await db.setting('trivia',null);const activities=await db.list('w_activities',{order:'id.desc',limit:1000}),votes=await db.list('w_votes'),houses=await db.list('w_households',{select:'id,name,details'}),names=new Map(houses.map(x=>[x.id,x.name]));return reply({songs:activities.filter(a=>a.kind==='song').map(a=>({id:a.id,body:a.body,votes:votes.filter(v=>v.song===a.id).length})).sort((a,b)=>b.votes-a.votes),voted:votes.filter(v=>v.household===h.id).map(v=>v.song),leaderboard:(trivia?await db.list('w_quiz',{round:'eq.'+trivia.round,order:'score.desc',limit:1000}):[]).filter(q=>!houses.find(h=>h.id===q.household)?.details?.is_test).slice(0,20).map(q=>({name:names.get(q.household),score:q.score,total:q.total})),guestbook:activities.filter(a=>a.kind==='guestbook').map(a=>({name:names.get(a.household),body:a.body})),photos:await db.list('w_photos',{select:'id,caption',order:'created.desc',limit:500}),hunt:(await db.one('w_hunt',{household:'eq.'+h.id}))?.items||[],personal:await db.one('w_guest_settings',{household:'eq.'+h.id})||{seat:'',events:''},travel:await db.setting('travel',{}),meals:await db.setting('meals',[]),trivia:trivia?{round:trivia.round,questions:trivia.questions.map(q=>({question:q.question,options:q.options}))}:null,quizDone:trivia?!!await db.one('w_quiz',{household:'eq.'+h.id,round:'eq.'+trivia.round}):false})}
+  if(p==='/api/community'){const trivia=await db.setting('trivia',null);const activities=await db.list('w_activities',{order:'id.desc',limit:1000}),votes=await db.list('w_votes'),houses=await db.list('w_households',{select:'id,name,details'}),names=new Map(houses.map(x=>[x.id,x.name]));return reply({songs:activities.filter(a=>a.kind==='song').map(a=>({id:a.id,body:a.body,votes:votes.filter(v=>v.song===a.id).length})).sort((a,b)=>b.votes-a.votes),voted:votes.filter(v=>v.household===h.id).map(v=>v.song),leaderboard:(trivia?await db.list('w_quiz',{round:'eq.'+trivia.round,order:'score.desc',limit:1000}):[]).filter(q=>!houses.find(h=>h.id===q.household)?.details?.is_test).slice(0,20).map(q=>({name:names.get(q.household),score:q.score,total:q.total})),guestbook:activities.filter(a=>a.kind==='guestbook').map(a=>({name:names.get(a.household),body:a.body})),...await photoPage(db,null),hunt:(await db.one('w_hunt',{household:'eq.'+h.id}))?.items||[],personal:await db.one('w_guest_settings',{household:'eq.'+h.id})||{seat:'',events:''},travel:await db.setting('travel',{}),meals:await db.setting('meals',[]),trivia:trivia?{round:trivia.round,questions:trivia.questions.map(q=>({question:q.question,options:q.options}))}:null,poll:await couplePoll(db,h),quizDone:trivia?!!await db.one('w_quiz',{household:'eq.'+h.id,round:'eq.'+trivia.round}):false})}
  }else{
   await limited(db,req,'guest-write',100);
+  if(p==='/api/poll'){await db.upsert('w_settings',{key:POLL_PREFIX+h.id,value:{answers:cleanPoll(b.answers)}});return reply({ok:true,poll:await couplePoll(db,h)})}
   if(p==='/api/activity'){if(!['song','memory','advice','guestbook'].includes(b.kind))throw new Problem('Unknown activity.');await db.insert('w_activities',{household:h.id,kind:b.kind,body:required(b.body,1500)});return reply({ok:true})}
   if(p==='/api/vote'){await db.rpc('wedding_vote',{p_household:h.id,p_song:integer(b.song)});return reply({ok:true})}
   if(p==='/api/quiz'){const trivia=await db.setting('trivia',null);if(!trivia)throw new Problem('Personal trivia is not open yet.');if(b.round!==trivia.round)throw new Problem('A new trivia round is available. Refresh before playing.');const answers=b.answers;if(!Array.isArray(answers)||answers.length!==trivia.questions.length||answers.some(a=>!Number.isInteger(a)||a<0||a>3))throw new Problem('Answer every trivia question.');const score=trivia.questions.filter((q,i)=>q.correct===answers[i]).length;await db.insert('w_quiz',{household:h.id,round:trivia.round,total:trivia.questions.length,score});return reply({ok:true,score,total:trivia.questions.length})}
   if(p==='/api/hunt'){let items=b.items;if(!Array.isArray(items)||items.some(i=>!['dance','details','friends','toast','blue'].includes(i)))throw new Problem('Invalid checklist.');await db.upsert('w_hunt',{household:h.id,items:[...new Set(items)]});return reply({ok:true})}
-  if(p==='/api/upload'){let bytes;try{bytes=Uint8Array.from(atob(b.data||''),c=>c.charCodeAt(0))}catch{throw new Problem('Invalid image upload.')}if(bytes.length>3145728)throw new Problem('Choose a photo smaller than 3 MB.');let mime;if(bytes[0]===255&&bytes[1]===216&&bytes[2]===255)mime='image/jpeg';else if(bytes.slice(0,8).join(',')==='137,80,78,71,13,10,26,10')mime='image/png';else if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';else throw new Problem('Use a JPEG, PNG or WebP image.');let id=token(),path=h.id+'/'+id;await db.rpc('wedding_photo_reserve',{p_id:id,p_household:h.id,p_path:path,p_mime:mime,p_caption:text(b.caption,200)});let uploaded=false;try{const r=await db.storage(path,{method:'POST',headers:{'Content-Type':mime},body:bytes});if(!r.ok)throw new Problem('The photo could not be uploaded.',503);uploaded=true}finally{if(!uploaded)await db.remove('w_photos',{id:'eq.'+id})}return reply({ok:true})}
+  // These routes are server-to-server only. The gateway blocks public access,
+  // validates image bytes, and sets the capability headers after authenticating.
+  if(p.startsWith('/api/_photos/')){
+   if(req.headers.get('X-Wedding-Storage')!=='r2'||req.headers.get('X-Wedding-Uploads')!=='r2')throw new Problem('Photo gateway required.',403);
+   if(p==='/api/_photos/authorize'){const id=token();return reply({id,path:'r2/'+h.id+'/'+id})}
+   if(p==='/api/_photos/complete'){
+    if(!/^[a-f0-9]{64}$/.test(b.id)||b.path!=='r2/'+h.id+'/'+b.id||!['image/jpeg','image/png','image/webp'].includes(b.mime))throw new Problem('Invalid photo upload.');
+    const existing=await db.one('w_photos',{id:'eq.'+b.id});if(existing){if(existing.household!==h.id||existing.path!==b.path)throw new Problem('Invalid photo upload.',403);return reply({ok:true})}
+    await db.insert('w_photos',{id:b.id,household:h.id,path:b.path,mime:b.mime,caption:text(b.caption,200)});return reply({ok:true});
+   }
+   throw new Problem('Photo route not found.',404);
+  }
+  if(p==='/api/upload'){const {bytes,mime}=imageBytes(b.data);let id=token(),path=h.id+'/'+id;await db.rpc('wedding_photo_reserve',{p_id:id,p_household:h.id,p_path:path,p_mime:mime,p_caption:text(b.caption,200)});let uploaded=false;try{const r=await db.storage(path,{method:'POST',headers:{'Content-Type':mime},body:bytes});if(!r.ok)throw new Problem('The photo could not be uploaded.',503);uploaded=true}finally{if(!uploaded)await db.remove('w_photos',{id:'eq.'+id})}return reply({ok:true})}
  }
  throw new Problem('Route not found.',404);
 }
