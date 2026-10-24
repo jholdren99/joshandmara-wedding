@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bash scripts/build.sh",
-    "validate": "node scripts/validate-artifact.mjs"
+    "validate": "node scripts/validate-artifact.mjs",
+    "test": "node --test backend/worker.test.mjs backend/seating.test.mjs worker/runtime.test.mjs"
   }
 }
