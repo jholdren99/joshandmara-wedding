@@ -1,4 +1,4 @@
-import {games,cleanQuestions} from './edge/individual-games.mjs';
+import {games,cleanQuestions} from './individual-games.mjs';
 const enc=new TextEncoder();
 export class Problem extends Error{constructor(message,status=400){super(message);this.status=status}}
 export const hex=bytes=>[...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,'0')).join('');
