@@ -45,6 +45,18 @@ test('R2 metadata requires trusted gateway and attending guest, validates paths,
  assert.equal(db.tables.w_photos.length,1);r=await call('photo/'+id);assert.equal(r.headers.get('X-Wedding-R2-Key'),path);
  db.tables.w_households[0].response='declined';await assert.rejects(()=>call('photo/'+id),e=>e.status===403);
 });
+test('wedding-party photos are owner-managed, publicly cropped, and stored only through the trusted R2 gateway',async()=>{
+ const db=new Memory(),id='b'.repeat(64),path='r2/party/jack/'+id;
+ let publicState=await(await api(request('party-photos'),{},db)).json();assert.deepEqual(publicState.photos,{});await fail('owner/party-photos',undefined,db);
+ db.current={role:'owner',username:'fixture-owner'};await api(request('owner/party-photo-crop',{slot:'jack',file:'wedding-party-jack.webp',x:62,y:41,zoom:1.2}),{},db);
+ publicState=await(await api(request('party-photos'),{},db)).json();assert.deepEqual(publicState.photos.jack,{source:'static',x:62,y:41,zoom:1.2,updatedAt:db.tables.w_settings[0].value.jack.updatedAt});
+ const call=(route,body)=>{const r=request(route,body);r.headers.set('X-Wedding-Storage','r2');r.headers.set('X-Wedding-Uploads','r2');return api(r,{},db)};
+ let auth=await(await call('_party-photos/authorize',{slot:'jack'})).json();assert.match(auth.path,/^r2\/party\/jack\/[a-f0-9]{64}$/);
+ await call('_party-photos/complete',{slot:'jack',id,path,mime:'image/jpeg',x:35,y:70,zoom:1.45});
+ const image=await api(request('party-photo/jack'),{},db).catch(e=>e);assert.equal(image.status,503);
+ const read=request('party-photo/jack');read.headers.set('X-Wedding-Storage','r2');const ready=await api(read,{},db);assert.equal(ready.headers.get('X-Wedding-R2-Key'),path);
+ await fail('owner/party-photo-crop',{slot:'unknown',x:50,y:50,zoom:1},db,400);db.current={role:'guest',household:1};await fail('_party-photos/authorize',{slot:'jack'},db,403);
+});
 test('photo pages continue beyond 500 records and reject malformed cursors',async()=>{
  const db=new Memory();db.current={role:'guest',household:1};db.tables.w_households[0].response='attending';
  const photos=Array.from({length:551},(_,i)=>({id:(551-i).toString(16).padStart(64,'0'),caption:'Photo '+i,created:'2026-10-24T12:00:00+00:00'}));

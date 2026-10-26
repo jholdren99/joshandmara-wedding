@@ -11,7 +11,7 @@ async function uploadBody(req){
  let bytes;try{bytes=Uint8Array.from(atob(b.data),c=>c.charCodeAt(0))}catch{throw new PhotoProblem('Invalid image upload.')}
  if(bytes.length>3145728)throw new PhotoProblem('Choose a photo smaller than 3 MB.',413);
  let mime;if(bytes[0]===255&&bytes[1]===216&&bytes[2]===255)mime='image/jpeg';else if(bytes.slice(0,8).join(',')==='137,80,78,71,13,10,26,10')mime='image/png';else if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';else throw new PhotoProblem('Use a JPEG, PNG or WebP image.');
- return{bytes,mime,caption:String(b.caption??'').trim().slice(0,200)};
+ return{bytes,mime,caption:String(b.caption??'').trim().slice(0,200),slot:String(b.slot??''),x:Number(b.x),y:Number(b.y),zoom:Number(b.zoom)};
 }
 export default{async fetch(req,env){try{
  const url=new URL(req.url);
@@ -19,7 +19,7 @@ export default{async fetch(req,env){try{
   if(!['GET','POST'].includes(req.method))return secured(json({error:'Method not allowed.'},405));
   if(req.method==='POST'&&req.headers.get('Origin')!==url.origin)return secured(json({error:'Invalid request origin.'},403));
   // No browser may call internal storage coordination routes or supply capabilities.
-  if(url.pathname.startsWith('/api/_photos/'))return secured(json({error:'Photo gateway required.'},403));
+  if(url.pathname.startsWith('/api/_photos/')||url.pathname.startsWith('/api/_party-photos/'))return secured(json({error:'Photo gateway required.'},403));
   if(!env.WEDDING_GATEWAY_SECRET)return secured(json({error:'The site connection is not yet ready.'},503));
   const headers=new Headers({'X-Wedding-Gateway':env.WEDDING_GATEWAY_SECRET,'X-Wedding-Path':url.pathname+url.search});
   for(const k of ['Cookie','Content-Type','CF-Connecting-IP']){const v=req.headers.get(k);if(v)headers.set(k,v)}
@@ -40,6 +40,13 @@ export default{async fetch(req,env){try{
    if(!completed.ok){await env.WEDDING_PHOTOS.delete(path);return secured(completed)}
    return secured(completed);
   }
+  if(url.pathname==='/api/owner/party-photo'&&req.method==='POST'){
+   if(env.PHOTO_STORAGE!=='r2'||!env.WEDDING_PHOTOS)return secured(json({error:'Wedding-party photo storage is not connected yet.'},503));
+   const upload=await uploadBody(req),{slot,x,y,zoom}=upload;if(!/^(couple|eden|julia-butler|danielle|julia-holdren|sophia|rebecca|jack|jake|liam|jamie|tyler|will)$/.test(slot)||!Number.isFinite(x)||x<0||x>100||!Number.isFinite(y)||y<0||y>100||!Number.isFinite(zoom)||zoom<1||zoom>2.4)throw new PhotoProblem('Use valid photo crop controls.');
+   const auth=await upstream('/api/_party-photos/authorize',{slot});if(!auth.ok)return secured(auth);const {id,path}=await auth.json();if(!/^[a-f0-9]{64}$/.test(id)||path!==`r2/party/${slot}/${id}`)throw new PhotoProblem('The photo connection is not ready.',503);
+   await env.WEDDING_PHOTOS.put(path,upload.bytes,{httpMetadata:{contentType:upload.mime},customMetadata:{photoId:id,slot}});
+   let completed;try{completed=await upstream('/api/_party-photos/complete',{slot,id,path,mime:upload.mime,x,y,zoom})}catch{completed=null}if(!completed||!completed.ok){await env.WEDDING_PHOTOS.delete(path);return secured(completed||json({error:'The photo could not be saved.'},503))}const result=await completed.json();if(result.oldPath&&result.oldPath!==path&&new RegExp('^r2/party/'+slot+'/[a-f0-9]{64}$').test(result.oldPath))await env.WEDDING_PHOTOS.delete(result.oldPath);return secured(json({ok:true}));
+  }
   const response=await upstream();
   const key=response.headers.get('X-Wedding-R2-Key');
   if(key&&response.ok&&req.method==='GET'&&/^\/api\/photo\/[a-f0-9]{64}$/.test(url.pathname)){
@@ -47,6 +54,9 @@ export default{async fetch(req,env){try{
    const {mime}=await response.json();if(!['image/jpeg','image/png','image/webp'].includes(mime))throw new PhotoProblem('Photo is unavailable.',404);
    const object=await env.WEDDING_PHOTOS.get(key);if(!object)return secured(json({error:'Photo is unavailable.'},404));
    return secured(new Response(object.body,{headers:{'Content-Type':mime,'Cache-Control':'private,no-store'}}));
+  }
+  if(key&&response.ok&&req.method==='GET'&&/^\/api\/party-photo\/[a-z-]+$/.test(url.pathname)){
+   const slot=url.pathname.split('/').pop();if(!env.WEDDING_PHOTOS||!new RegExp('^r2/party/'+slot+'/[a-f0-9]{64}$').test(key))return secured(json({error:'The photo connection is not ready.'},503));const {mime}=await response.json();if(!['image/jpeg','image/png','image/webp'].includes(mime))throw new PhotoProblem('Photo is unavailable.',404);const object=await env.WEDDING_PHOTOS.get(key);if(!object)return secured(json({error:'Photo is unavailable.'},404));return secured(new Response(object.body,{headers:{'Content-Type':mime,'Cache-Control':'public,max-age=300'}}));
   }
   const result=new Response(response.body,response);result.headers.delete('X-Wedding-R2-Key');result.headers.set('Cache-Control','no-store');return secured(result);
  }
