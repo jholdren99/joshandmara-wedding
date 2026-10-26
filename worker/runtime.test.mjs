@@ -45,7 +45,7 @@ test('owner wedding-party uploads save crop metadata, replace old objects, and s
  const b=bucket(),partyId='b'.repeat(64),partyPath='r2/party/jack/'+partyId,oldPath='r2/party/jack/'+'c'.repeat(64),calls=[];
  await b.put(oldPath,new Uint8Array([255,216,255]),{});
  await mocked(t,async(u,init)=>{const p=init.headers.get('X-Wedding-Path');calls.push(p);if(p==='/api/_party-photos/authorize')return json({id:partyId,path:partyPath});if(p==='/api/_party-photos/complete'){const body=JSON.parse(init.body);assert.deepEqual({slot:body.slot,x:body.x,y:body.y,zoom:body.zoom},{slot:'jack',x:42,y:64,zoom:1.3});return json({ok:true,oldPath})}if(p==='/api/party-photo/jack')return json({mime:'image/jpeg'},200,{'X-Wedding-R2-Key':partyPath});throw Error('Unexpected '+p)});
- let r=await gateway.fetch(req('/api/owner/party-photo',{slot:'jack',data:btoa('\xff\xd8\xffportrait'),x:42,y:64,zoom:1.3}),{...env,WEDDING_PHOTOS:b});assert.equal(r.status,200);assert.ok(b.objects.has(partyPath));assert.equal(b.objects.has(oldPath),false);
- r=await gateway.fetch(req('/api/party-photo/jack'),{...env,WEDDING_PHOTOS:b});assert.equal(r.status,200);assert.equal(r.headers.get('Cache-Control'),'public,max-age=300');assert.equal(r.headers.get('X-Wedding-R2-Key'),null);
+ const bucketOnlyEnv={WEDDING_GATEWAY_SECRET:env.WEDDING_GATEWAY_SECRET,WEDDING_PHOTOS:b};let r=await gateway.fetch(req('/api/owner/party-photo',{slot:'jack',data:btoa('\xff\xd8\xffportrait'),x:42,y:64,zoom:1.3}),bucketOnlyEnv);assert.equal(r.status,200);assert.ok(b.objects.has(partyPath));assert.equal(b.objects.has(oldPath),false);
+ r=await gateway.fetch(req('/api/party-photo/jack'),bucketOnlyEnv);assert.equal(r.status,200);assert.equal(r.headers.get('Cache-Control'),'public,max-age=300');assert.equal(r.headers.get('X-Wedding-R2-Key'),null);
  r=await gateway.fetch(req('/api/_party-photos/complete',{slot:'jack'}),{...env,WEDDING_PHOTOS:b});assert.equal(r.status,403);
 });

@@ -25,10 +25,9 @@ export default{async fetch(req,env){try{
   for(const k of ['Cookie','Content-Type','CF-Connecting-IP']){const v=req.headers.get(k);if(v)headers.set(k,v)}
   // Always pass the actual site origin, including for same-origin GET requests.
   headers.set('Origin',url.origin);
-  if(env.WEDDING_PHOTOS)headers.set('X-Wedding-Storage','r2');
-  if(env.PHOTO_STORAGE==='r2'&&env.WEDDING_PHOTOS)headers.set('X-Wedding-Uploads','r2');
+  if(env.WEDDING_PHOTOS){headers.set('X-Wedding-Storage','r2');headers.set('X-Wedding-Uploads','r2')}
   const upstream=(path,body)=>{const h=new Headers(headers);if(path)h.set('X-Wedding-Path',path);if(body!==undefined)h.set('Content-Type','application/json');return fetch('https://eucviawdbrnplxoxhvxw.supabase.co/functions/v1/wedding-api',{method:body===undefined?req.method:'POST',headers:h,body:body===undefined?(req.method==='POST'?req.body:undefined):JSON.stringify(body),redirect:'manual',duplex:'half'})};
-  if(url.pathname==='/api/upload'&&req.method==='POST'&&env.PHOTO_STORAGE==='r2'){
+  if(url.pathname==='/api/upload'&&req.method==='POST'&&(env.WEDDING_PHOTOS||env.PHOTO_STORAGE==='r2')){
    if(!env.WEDDING_PHOTOS)return secured(json({error:'The photo album is being connected. Please try again later.'},503));
    const auth=await upstream('/api/_photos/authorize',{});if(!auth.ok)return secured(auth);
    const {id,path}=await auth.json();if(!/^[a-f0-9]{64}$/.test(id)||!new RegExp('^r2/[0-9]+/'+id+'$').test(path))throw new PhotoProblem('The photo album connection is not ready.',503);
@@ -41,7 +40,7 @@ export default{async fetch(req,env){try{
    return secured(completed);
   }
   if(url.pathname==='/api/owner/party-photo'&&req.method==='POST'){
-   if(env.PHOTO_STORAGE!=='r2'||!env.WEDDING_PHOTOS)return secured(json({error:'Wedding-party photo storage is not connected yet.'},503));
+   if(!env.WEDDING_PHOTOS)return secured(json({error:'Wedding-party photo storage is not connected yet.'},503));
    const upload=await uploadBody(req),{slot,x,y,zoom}=upload;if(!/^(couple|eden|julia-butler|danielle|julia-holdren|sophia|rebecca|jack|jake|liam|jamie|tyler|will)$/.test(slot)||!Number.isFinite(x)||x<0||x>100||!Number.isFinite(y)||y<0||y>100||!Number.isFinite(zoom)||zoom<1||zoom>2.4)throw new PhotoProblem('Use valid photo crop controls.');
    const auth=await upstream('/api/_party-photos/authorize',{slot});if(!auth.ok)return secured(auth);const {id,path}=await auth.json();if(!/^[a-f0-9]{64}$/.test(id)||path!==`r2/party/${slot}/${id}`)throw new PhotoProblem('The photo connection is not ready.',503);
    await env.WEDDING_PHOTOS.put(path,upload.bytes,{httpMetadata:{contentType:upload.mime},customMetadata:{photoId:id,slot}});
