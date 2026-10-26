@@ -24,3 +24,41 @@
 @media print{.seating-canvas{left:0!important;top:0!important}.seating-viewport #seating-scaled{overflow:visible!important}}
 
 .seating-floor{overflow:visible}.seating-floor .door-label{font:600 16px "DM Sans",sans-serif;letter-spacing:2px;fill:#60788a;paint-order:stroke;stroke:#f2f5f7;stroke-width:5px;stroke-linejoin:round}
+
+
+/* Dedicated print packet: a full-room map followed by a readable table roster. */
+.seating-print-title,.seating-print-roster{display:none}
+@media print{
+ @page{size:landscape;margin:7mm}
+ html,body{background:#fff!important}
+ body.seating-printing{margin:0!important;color:#243f55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ body.seating-printing>header,body.seating-printing>footer,body.seating-printing>.preview,body.seating-printing .owner-nav,body.seating-printing .seating-heading,body.seating-printing .seating-save,body.seating-printing .seating-toolbar,body.seating-printing .seating-help,body.seating-printing .seating-sidebar,body.seating-printing .seating-floor-caption,body.seating-printing .seating-table-editor,body.seating-printing .seating-bottom,body.seating-printing .seating-message{display:none!important}
+ body.seating-printing #app{margin:0!important;padding:0!important}
+ body.seating-printing .seating-section{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important}
+ body.seating-printing .seating-print-title{height:34px;display:flex!important;align-items:center;justify-content:space-between;border-bottom:1px solid #bccbd5;margin:0 0 5px;font:16px 'Cormorant Garamond',Georgia,serif}
+ body.seating-printing .seating-print-title span{font:9px 'DM Sans',sans-serif;letter-spacing:2px;text-transform:uppercase}
+ body.seating-printing .seating-summary{display:flex!important;height:24px;padding:0 0 5px!important;gap:22px;font-size:9px;align-items:center}
+ body.seating-printing .seating-summary strong{font-size:12px}
+ body.seating-printing .seating-layout{display:block!important}
+ body.seating-printing .seating-work{width:100%!important}
+ body.seating-printing .seating-viewport{display:block!important;width:792px!important;height:638px!important;margin:0 auto!important;min-height:0!important;overflow:hidden!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:#fff!important}
+ body.seating-printing #seating-scaled{position:relative!important;width:792px!important;height:638px!important;overflow:hidden!important}
+ body.seating-printing .seating-canvas{position:relative!important;left:0!important;top:0!important;width:3600px!important;height:2900px!important;transform:none!important;zoom:.22}
+ body.seating-printing .seating-section .seating-seat.seat-outside{font-size:34px!important;border-color:#8ea6b7!important;background:#fff!important;color:#193e58!important}
+ body.seating-printing .seating-table-outside .seating-table-handle strong{font-size:27px!important}
+ body.seating-printing .seating-table-outside .seating-table-handle small{font-size:20px!important}
+ body.seating-printing .move-dots{display:none!important}
+ body.seating-printing .seating-print-roster{display:block!important;break-before:page;page-break-before:always;padding:0!important}
+ body.seating-printing .print-roster-heading{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid #8ea6b7;padding:0 0 6px;margin:0 0 8px}
+ body.seating-printing .print-roster-heading strong{font:17px 'Cormorant Garamond',Georgia,serif}
+ body.seating-printing .print-roster-heading h2{font-size:24px;margin:2px 0 0}
+ body.seating-printing .print-roster-heading>span{font-size:9px;letter-spacing:1px;text-transform:uppercase}
+ body.seating-printing .print-table-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px}
+ body.seating-printing .print-table-card{border:1px solid #c7d3dc;padding:7px 9px;break-inside:avoid;min-height:142px}
+ body.seating-printing .print-table-card h3{font:600 13px 'Cormorant Garamond',Georgia,serif;margin:0 0 4px;border-bottom:1px solid #dce4ea;padding-bottom:3px}
+ body.seating-printing .print-table-card ol{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:1px 8px}
+ body.seating-printing .print-table-card li{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ body.seating-printing .print-table-card li span{display:inline-block;width:13px;color:#6a7f8e}
+ body.seating-printing .print-table-card em{color:#9aa8b1}
+ body.seating-printing .print-unseated{font-size:8px;margin-top:7px;border-top:1px solid #dce4ea;padding-top:5px}
+}
