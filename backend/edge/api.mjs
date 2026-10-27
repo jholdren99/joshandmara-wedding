@@ -9,7 +9,7 @@ const normalizeName=s=>text(s,150).normalize('NFKC').toLocaleLowerCase('en-US').
 const integer=(x,min=1,max=Number.MAX_SAFE_INTEGER)=>{let n=Number(x);if(!Number.isSafeInteger(n)||n<min||n>max)throw new Problem('Invalid number.');return n};
 const required=(s,max=200)=>{s=text(s,max);if(!s)throw new Problem('Please complete the required fields.');return s};
 const PARTY_SLOTS=new Set(['couple','eden','julia-butler','danielle','julia-holdren','sophia','rebecca','jack','jake','liam','jamie','tyler','will']);
-const PARTY_FILES=new Set(['','homepage.webp','wedding-party-jack.webp','wedding-party-jake.webp','wedding-party-jamie.webp','wedding-party-tyler.webp','wedding-party-will.webp']);
+const PARTY_FILES=new Set(['','homepage.webp','wedding-party-eden.webp','wedding-party-julia-butler.webp','wedding-party-danielle.webp','wedding-party-julia-holdren.webp','wedding-party-sophia.webp','wedding-party-rebecca.webp','wedding-party-jack.webp','wedding-party-jake.webp','wedding-party-jamie.webp','wedding-party-tyler.webp','wedding-party-will.webp']);
 const partySlot=s=>{s=String(s||'');if(!PARTY_SLOTS.has(s))throw new Problem('Choose a wedding-party person.');return s};
 const partyCrop=b=>{const x=Number(b.x),y=Number(b.y),zoom=Number(b.zoom);if(!Number.isFinite(x)||x<0||x>100||!Number.isFinite(y)||y<0||y>100||!Number.isFinite(zoom)||zoom<1||zoom>2.4)throw new Problem('Use valid photo crop controls.');return{x:Math.round(x),y:Math.round(y),zoom:Math.round(zoom*100)/100}};
 const wire=h=>h?{...h,guests:JSON.stringify(h.guests),details:JSON.stringify(h.details)}:null;
